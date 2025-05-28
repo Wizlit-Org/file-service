@@ -1,19 +1,34 @@
--- Create the `point` table if it does not exist
-CREATE TABLE IF NOT EXISTS point (
-    id SERIAL PRIMARY KEY, -- Primary key with string ID
-    title VARCHAR(255) NOT NULL UNIQUE, -- Title cannot be null
-    objective VARCHAR(255), -- Title cannot be null
-    document VARCHAR(255), -- Title cannot be null
-    created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Automatically sets the current timestamp on insert
+-- Create function to generate random file ID
+CREATE OR REPLACE FUNCTION generate_file_id() RETURNS VARCHAR(32) AS $$
+DECLARE
+    chars TEXT := 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    result VARCHAR(32) := '';
+    i INTEGER := 0;
+BEGIN
+    -- Generate 32 character random string
+    FOR i IN 1..32 LOOP
+        result := result || substr(chars, floor(random() * length(chars) + 1)::integer, 1);
+    END LOOP;
+    RETURN result;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create file table
+CREATE TABLE file (
+    file_id VARCHAR(32) PRIMARY KEY DEFAULT generate_file_id(),
+    file_size BIGINT NOT NULL,
+    file_uploader BIGINT NOT NULL,
+    file_created_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    file_type VARCHAR(50) NOT NULL,
+    file_extension VARCHAR(15) NOT NULL,
+    file_hash VARCHAR(32) NOT NULL UNIQUE
 );
 
--- Create the `edge` table with a surrogate primary key
-CREATE TABLE IF NOT EXISTS edge (
-    id BIGSERIAL PRIMARY KEY,
-    origin_point BIGINT NOT NULL,
-    destination_point BIGINT NOT NULL,
-    created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_start FOREIGN KEY (origin_point) REFERENCES point(id) ON DELETE CASCADE,
-    CONSTRAINT fk_end FOREIGN KEY (destination_point) REFERENCES point(id) ON DELETE CASCADE,
-    CONSTRAINT unique_edge UNIQUE (origin_point, destination_point)
+-- Create file_usage table with composite primary key
+CREATE TABLE view (
+    file_id VARCHAR(32) NOT NULL,
+    view_count BIGINT NOT NULL DEFAULT 0,
+    last_viewed_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (file_id),
+    FOREIGN KEY (file_id) REFERENCES file(file_id) ON DELETE CASCADE
 );
