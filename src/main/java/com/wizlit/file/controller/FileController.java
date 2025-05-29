@@ -38,9 +38,6 @@ public class FileController {
 
     private final FileService fileService;
     private final S3Service s3Service;
-    
-    @Value("${aws.s3.url}")
-    private String s3Url;
 
     @Value("${aws.s3.bucket}")
     private String s3Bucket;
