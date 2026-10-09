@@ -2,8 +2,8 @@ name: Docker Build and Push
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
     paths:
       - '**'
       - '.github/workflows/docker-publish.yml'
@@ -35,9 +35,12 @@ jobs:
       - name: Extract version tag
         id: extract_version
         run: |
-          # strip "refs/tags/" then strip leading "v"
-          tag="${GITHUB_REF#refs/tags/}"
-          tag="${tag#v}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+            tag="${tag#v}"
+          else
+            tag="${GITHUB_SHA::7}"
+          fi
           echo "version=$tag" >> "$GITHUB_OUTPUT"
       
       - name: Build and push
