@@ -7,14 +7,19 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 import com.wizlit.file.entity.File;
+import com.wizlit.file.entity.UserStorageQuota;
 import com.wizlit.file.entity.View;
 import com.wizlit.file.repository.FileRepository;
+import com.wizlit.file.repository.UserStorageQuotaRepository;
 import com.wizlit.file.repository.ViewRepository;
 import com.wizlit.file.utils.Validator;
 
 import lombok.RequiredArgsConstructor;
 
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+
+import java.util.Collection;
 
 /**
  * ProjectManager is a component responsible for managing project-related operations.
@@ -40,6 +45,7 @@ public class FileManager {
 
     private final FileRepository fileRepository;
     private final ViewRepository viewRepository;
+    private final UserStorageQuotaRepository userStorageQuotaRepository;
 
     /**
      * Find file by hash
@@ -118,6 +124,94 @@ public class FileManager {
             )
             .onErrorMap(error -> Validator.from(error)
                 .toException());
+    }
+
+    /**
+     * Attach files to memo and transition status to ACTIVE (1)
+     *
+     * @param memoId memo id
+     * @param fileIds collection of file ids
+     * @return count of updated records
+     */
+    public Mono<Integer> attachFiles(Long memoId, Collection<String> fileIds) {
+        if (fileIds == null || fileIds.isEmpty()) {
+            return Mono.just(0);
+        }
+        return fileRepository.updateAttachFiles(memoId, fileIds)
+            .onErrorMap(error -> Validator.from(error).toException());
+    }
+
+    /**
+     * Get all files attached to a memo
+     *
+     * @param memoId memo id
+     * @return flux of files
+     */
+    public Flux<File> getFilesByMemoId(Long memoId) {
+        return fileRepository.findAllByMemoId(memoId)
+            .onErrorMap(error -> Validator.from(error).toException());
+    }
+
+    /**
+     * Delete all files attached to a memo from database
+     *
+     * @param memoId memo id
+     * @return count of deleted records
+     */
+    public Mono<Integer> deleteFilesByMemoId(Long memoId) {
+        return fileRepository.deleteAllByMemoId(memoId)
+            .onErrorMap(error -> Validator.from(error).toException());
+    }
+
+    /**
+     * Get pending files created before cutoff timestamp
+     *
+     * @param cutoff cutoff timestamp
+     * @return flux of pending files
+     */
+    public Flux<File> getPendingFilesBefore(Instant cutoff) {
+        return fileRepository.findPendingFilesBefore(cutoff)
+            .onErrorMap(error -> Validator.from(error).toException());
+    }
+
+    /**
+     * Delete files by collection of file IDs
+     *
+     * @param fileIds file IDs to delete
+     * @return count of deleted records
+     */
+    public Mono<Integer> deleteFilesByIds(Collection<String> fileIds) {
+        if (fileIds == null || fileIds.isEmpty()) {
+            return Mono.just(0);
+        }
+        return fileRepository.deleteFilesByIds(fileIds)
+            .onErrorMap(error -> Validator.from(error).toException());
+    }
+
+    /**
+     * Find user storage quota by user id and year month
+     *
+     * @param userId user id
+     * @param yearMonth year month (e.g. 202610)
+     * @return user storage quota mono
+     */
+    public Mono<UserStorageQuota> getUserStorageQuota(Long userId, String yearMonth) {
+        return userStorageQuotaRepository.findByUserIdAndYearMonth(userId, yearMonth)
+            .onErrorMap(error -> Validator.from(error).toException());
+    }
+
+    /**
+     * Upsert user storage quota
+     *
+     * @param userId user id
+     * @param yearMonth year month (e.g. 202610)
+     * @param addBytes bytes to add
+     * @param maxBytes max bytes allowed
+     * @return updated count
+     */
+    public Mono<Integer> upsertUserStorageQuota(Long userId, String yearMonth, Long addBytes, Long maxBytes) {
+        return userStorageQuotaRepository.upsertQuota(userId, yearMonth, addBytes, maxBytes)
+            .onErrorMap(error -> Validator.from(error).toException());
     }
 
 }

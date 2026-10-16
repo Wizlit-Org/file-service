@@ -61,6 +61,32 @@ class PrivateAccessFilterTest {
         assertThat(exchange.getAttributes().get("token")).isEqualTo(mockJwt);
     }
 
+    @Test
+    @DisplayName("핸들러 매핑이 비어있는 비매핑/정적 경로 요청 시 체인에 위임되어 통과 검증")
+    void filter_withUnmappedHandler_shouldDelegateToChain() {
+        // Given
+        RequestMappingHandlerMapping handlerMapping = Mockito.mock(RequestMappingHandlerMapping.class);
+        WebFilterChain chain = Mockito.mock(WebFilterChain.class);
+        when(chain.filter(any())).thenReturn(Mono.empty());
+        when(handlerMapping.getHandler(any())).thenReturn(Mono.empty());
+
+        PrivateAccessFilter filter = new PrivateAccessFilter(
+                handlerMapping,
+                "admin@wizlit.com,*",
+                false,
+                null
+        );
+
+        MockServerHttpRequest request = MockServerHttpRequest.get("/api/files/testId").build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+        // When & Then
+        StepVerifier.create(filter.filter(exchange, chain))
+                .verifyComplete();
+
+        Mockito.verify(chain).filter(exchange);
+    }
+
     @PrivateAccess
     public void sampleHandler() {
     }

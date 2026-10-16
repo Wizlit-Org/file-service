@@ -6,8 +6,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.Optional;
 import jakarta.xml.bind.DatatypeConverter;
+
+import com.wizlit.file.entity.File;
+import com.wizlit.file.entity.UserStorageQuota;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -17,7 +24,9 @@ import org.springframework.http.codec.multipart.FilePart;
 
 import com.wizlit.file.exception.ApiException;
 import com.wizlit.file.exception.ErrorCode;
+import com.wizlit.file.exception.QuotaExceededException;
 import com.wizlit.file.model.domain.FileDto;
+import com.wizlit.file.model.domain.UserQuotaResponse;
 import com.wizlit.file.service.FileService;
 import com.wizlit.file.service.S3Service;
 import com.wizlit.file.service.manager.FileManager;
@@ -28,6 +37,8 @@ import reactor.core.publisher.Mono;
 @Service
 @RequiredArgsConstructor
 public class FileServiceImpl implements FileService {
+
+    private static final long DEFAULT_MAX_QUOTA_BYTES = 104857600L; // 100MB
 
     private final S3Service s3Service;
     private final FileManager fileManager;
@@ -48,13 +59,10 @@ public class FileServiceImpl implements FileService {
             .flatMap(tmpPath -> {
                 MediaType contentType = filePart.headers().getContentType();
                 String filename = filePart.filename();
-                String fileExtension = null;
-                
-                // Extract file extension more safely
                 int lastDotIndex = filename.lastIndexOf('.');
-                if (lastDotIndex > 0 && lastDotIndex < filename.length() - 1) {
-                    fileExtension = filename.substring(lastDotIndex + 1).toLowerCase();
-                }
+                String fileExtension = (lastDotIndex > 0 && lastDotIndex < filename.length() - 1) 
+                    ? filename.substring(lastDotIndex + 1).toLowerCase() 
+                    : null;
                 
                 if (contentType == null || fileExtension == null) {
                     throw new ApiException(ErrorCode.INVALID_FILE_FORMAT);
@@ -72,9 +80,26 @@ public class FileServiceImpl implements FileService {
 
                     String md5 = DatatypeConverter.printHexBinary(md.digest());
                     long size = Files.size(tmpPath);
+                    String yearMonth = YearMonth.now().format(DateTimeFormatter.ofPattern("yyyyMM"));
 
-                    // 2) check for existing by hash
-                    return fileManager.findByHash(md5)
+                    // 2) quota pre-validation
+                    return fileManager.getUserStorageQuota(uploaderUserId, yearMonth)
+                        .defaultIfEmpty(UserStorageQuota.builder()
+                            .userId(uploaderUserId)
+                            .yearMonth(yearMonth)
+                            .usedBytes(0L)
+                            .maxBytes(DEFAULT_MAX_QUOTA_BYTES)
+                            .build())
+                        .flatMap(quota -> {
+                            long used = quota.getUsedBytes() != null ? quota.getUsedBytes() : 0L;
+                            long max = quota.getMaxBytes() != null ? quota.getMaxBytes() : DEFAULT_MAX_QUOTA_BYTES;
+                            if (used + size > max) {
+                                return Mono.error(new QuotaExceededException(used, max, size));
+                            }
+                            return Mono.just(max);
+                        })
+                        .flatMap(currentMax ->
+                            fileManager.findByHash(md5)
                     .flatMap(existing ->
                         // already stored: return DTO immediately
                         Mono.just(new FileDto(existing))
@@ -101,9 +126,11 @@ public class FileServiceImpl implements FileService {
                                 } catch (IOException ex) {
                                     return Mono.error(new IllegalStateException("S3 upload failed", ex));
                                 }
-                                return Mono.just(new FileDto(savedFile));
+                                return fileManager.upsertUserStorageQuota(uploaderUserId, yearMonth, size, currentMax)
+                                    .thenReturn(new FileDto(savedFile));
                             })
                     )
+                )
                     .doFinally(signal -> {
                         try { Files.deleteIfExists(tmpPath); }
                         catch (IOException ignored) {}
@@ -117,9 +144,89 @@ public class FileServiceImpl implements FileService {
     @Override
     public Mono<FileDto> getFileMetadataMarkViewed(String fileId) {
         return fileManager.getFileMetadata(fileId)
+            .switchIfEmpty(Mono.error(new ApiException(ErrorCode.FILE_NOT_FOUND, fileId)))
             .flatMap(file -> fileManager.fileViewed(fileId)
                 .thenReturn(file)
                 .map(FileDto::new));
+    }
+
+    @Transactional
+    @Override
+    public Mono<Void> attachFiles(Long memoId, List<String> fileIds) {
+        if (memoId == null || fileIds == null || fileIds.isEmpty()) {
+            return Mono.empty();
+        }
+        return fileManager.attachFiles(memoId, fileIds).then();
+    }
+
+    @Transactional
+    @Override
+    public Mono<Void> deleteFilesByMemoId(Long memoId) {
+        if (memoId == null) {
+            return Mono.empty();
+        }
+        return fileManager.getFilesByMemoId(memoId)
+            .collectList()
+            .flatMap(files -> {
+                if (files.isEmpty()) {
+                    return Mono.empty();
+                }
+                for (File file : files) {
+                    try {
+                        String key = file.getFileId() + "." + file.getFileExtension();
+                        s3Service.deleteFile(bucket, key);
+                    } catch (Exception ignored) {
+                    }
+                }
+                return fileManager.deleteFilesByMemoId(memoId).then();
+            });
+    }
+
+    @Transactional
+    @Override
+    public Mono<Integer> cleanupOrphanFiles(Instant cutoff) {
+        Instant effectiveCutoff = cutoff != null ? cutoff : Instant.now().minus(java.time.Duration.ofHours(24));
+        return fileManager.getPendingFilesBefore(effectiveCutoff)
+            .collectList()
+            .flatMap(files -> {
+                if (files.isEmpty()) {
+                    return Mono.just(0);
+                }
+                List<String> fileIdsToDelete = new java.util.ArrayList<>();
+                for (File file : files) {
+                    try {
+                        String key = file.getFileId() + "." + file.getFileExtension();
+                        s3Service.deleteFile(bucket, key);
+                    } catch (Exception ignored) {
+                    }
+                    fileIdsToDelete.add(file.getFileId());
+                }
+                return fileManager.deleteFilesByIds(fileIdsToDelete);
+            });
+    }
+
+    @Override
+    public Mono<UserQuotaResponse> getUserQuota(Long userId) {
+        String yearMonth = YearMonth.now().format(DateTimeFormatter.ofPattern("yyyyMM"));
+        return fileManager.getUserStorageQuota(userId, yearMonth)
+            .defaultIfEmpty(UserStorageQuota.builder()
+                .userId(userId)
+                .yearMonth(yearMonth)
+                .usedBytes(0L)
+                .maxBytes(DEFAULT_MAX_QUOTA_BYTES)
+                .build())
+            .map(quota -> {
+                long used = quota.getUsedBytes() != null ? quota.getUsedBytes() : 0L;
+                long max = quota.getMaxBytes() != null ? quota.getMaxBytes() : DEFAULT_MAX_QUOTA_BYTES;
+                long remaining = Math.max(0L, max - used);
+                return UserQuotaResponse.builder()
+                    .userId(userId)
+                    .yearMonth(yearMonth)
+                    .usedBytes(used)
+                    .maxBytes(max)
+                    .remainingBytes(remaining)
+                    .build();
+            });
     }
 
 }

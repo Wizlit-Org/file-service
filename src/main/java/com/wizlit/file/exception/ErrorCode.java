@@ -14,6 +14,8 @@ public enum ErrorCode {
     // File errors
     INVALID_FILE_FORMAT(HttpStatus.BAD_REQUEST,
             "Invalid file format"),
+    FILE_NOT_FOUND(HttpStatus.NOT_FOUND,
+            "File not found with id: %s"),
 
     // Generic errors
     EMPTY(HttpStatus.BAD_REQUEST,

@@ -95,7 +95,8 @@ public class PrivateAccessFilter implements WebFilter {
                     } else {
                         return chain.filter(exchange);
                     }
-                });
+                })
+                .switchIfEmpty(chain.filter(exchange));
     }
 
     private Mono<Void> authenticate(ServerWebExchange exchange, WebFilterChain chain) {

@@ -20,14 +20,18 @@ public class FileDto {
     private Long fileCreatedTimestamp;
     private String fileType;
     private String fileExtension;
+    private Long memoId;
+    private Integer status;
 
     public FileDto(File file) {
         this.fileId = file.getFileId();
         this.fileSize = file.getFileSize();
         this.fileUploader = file.getFileUploader();
-        this.fileCreatedTimestamp = file.getFileCreatedTimestamp().toEpochMilli();
+        this.fileCreatedTimestamp = file.getFileCreatedTimestamp() != null ? file.getFileCreatedTimestamp().toEpochMilli() : null;
         this.fileType = file.getFileType();
         this.fileExtension = file.getFileExtension();
         this.fullName = file.getFileId() + "." + this.fileExtension;
+        this.memoId = file.getMemoId();
+        this.status = file.getStatus();
     }
 }
