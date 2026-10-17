@@ -95,7 +95,8 @@ public class PrivateAccessFilter implements WebFilter {
                     } else {
                         return chain.filter(exchange);
                     }
-                });
+                })
+                .switchIfEmpty(chain.filter(exchange));
     }
 
     private Mono<Void> authenticate(ServerWebExchange exchange, WebFilterChain chain) {
@@ -169,12 +170,18 @@ public class PrivateAccessFilter implements WebFilter {
                     if (privateAccess != null && "admin".equals(privateAccess.role()) && !ADMIN_EMAIL.equals(email)) {
                         return Mono.error(new ApiException(ErrorCode.INACCESSIBLE_USER));
                     }
-                    exchange.getAttributes().put("email", email);
-                    exchange.getAttributes().put("name", name);
-                    exchange.getAttributes().put("avatar", avatar);
-                    exchange.getAttributes().put("token", token);
+                    putAttributeSafe(exchange, "email", email);
+                    putAttributeSafe(exchange, "name", name);
+                    putAttributeSafe(exchange, "avatar", avatar);
+                    putAttributeSafe(exchange, "token", token);
                     return chain.filter(exchange);
                 });
+    }
+
+    private void putAttributeSafe(ServerWebExchange exchange, String key, Object value) {
+        if (exchange != null && exchange.getAttributes() != null && key != null && value != null) {
+            exchange.getAttributes().put(key, value);
+        }
     }
 
 //    private Mono<Void> authenticate(ServerWebExchange exchange, WebFilterChain chain) {

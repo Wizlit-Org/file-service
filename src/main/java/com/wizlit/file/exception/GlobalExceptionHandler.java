@@ -20,6 +20,7 @@ import reactor.core.publisher.Mono;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 @Component
 @Order(-2)
@@ -31,6 +32,18 @@ public class GlobalExceptionHandler implements WebExceptionHandler {
     private static final String BASE_PACKAGE = ApiException.class.getPackageName().replaceFirst("\\.[^.]+$", "");
 
     private final ObjectMapper mapper;
+
+    @ExceptionHandler(QuotaExceededException.class)
+    public Mono<ResponseEntity<Map<String, Object>>> handleQuotaExceededException(QuotaExceededException exception) {
+        log.warn("Quota exceeded error: {}", exception.getMessage());
+        Map<String, Object> body = Map.of(
+                "error", "MONTHLY_QUOTA_EXCEEDED",
+                "usedBytes", exception.getUsedBytes(),
+                "maxBytes", exception.getMaxBytes(),
+                "requestedBytes", exception.getRequestedBytes()
+        );
+        return Mono.just(ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(body));
+    }
 
     // Handle all custom API exceptions
     @ExceptionHandler(ApiException.class)
@@ -81,6 +94,24 @@ public class GlobalExceptionHandler implements WebExceptionHandler {
             // Log a warning and simply return an error (or empty)
             log.warn("Response already committed, cannot write error response", ex);
             return Mono.empty();
+        }
+
+        if (ex instanceof QuotaExceededException quotaEx) {
+            try {
+                ServerHttpResponse resp = exchange.getResponse();
+                resp.setStatusCode(HttpStatus.TOO_MANY_REQUESTS);
+                resp.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+                Map<String, Object> body = Map.of(
+                        "error", "MONTHLY_QUOTA_EXCEEDED",
+                        "usedBytes", quotaEx.getUsedBytes(),
+                        "maxBytes", quotaEx.getMaxBytes(),
+                        "requestedBytes", quotaEx.getRequestedBytes()
+                );
+                DataBuffer buffer = resp.bufferFactory().wrap(mapper.writeValueAsBytes(body));
+                return resp.writeWith(Mono.just(buffer));
+            } catch (Exception e) {
+                return Mono.error(e);
+            }
         }
 
         Mono<ResponseEntity<ErrorResponse>> responseMono = (ex instanceof ApiException apiEx)

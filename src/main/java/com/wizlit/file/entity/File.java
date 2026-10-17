@@ -44,4 +44,10 @@ public class File {
 
     @Column("file_hash")
     private String fileHash;
+
+    @Column("memo_id")
+    private Long memoId;
+
+    @Column("status")
+    private Integer status;
 }

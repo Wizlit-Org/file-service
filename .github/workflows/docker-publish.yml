@@ -2,8 +2,8 @@ name: Docker Build and Push
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
     paths:
       - '**'
       - '.github/workflows/docker-publish.yml'
@@ -35,9 +35,12 @@ jobs:
       - name: Extract version tag
         id: extract_version
         run: |
-          # strip "refs/tags/" then strip leading "v"
-          tag="${GITHUB_REF#refs/tags/}"
-          tag="${tag#v}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+            tag="${tag#v}"
+          else
+            tag="${GITHUB_SHA::7}"
+          fi
           echo "version=$tag" >> "$GITHUB_OUTPUT"
       
       - name: Build and push
@@ -48,3 +51,17 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.extract_version.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Deploy to AWS Server via SSH
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        if: env.SERVER_HOST != ''
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER || 'ubuntu' }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/wizlit/scripts
+            docker compose -f docker-compose.yml pull file-service
+            docker compose -f docker-compose.yml up -d --no-build file-service
