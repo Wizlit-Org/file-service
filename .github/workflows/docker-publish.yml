@@ -63,5 +63,5 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             cd /home/ubuntu/wizlit/scripts
-            docker compose -f docker-compose.prod.yml pull file-service
-            docker compose -f docker-compose.prod.yml up -d file-service
+            docker compose -f docker-compose.yml pull file-service
+            docker compose -f docker-compose.yml up -d --no-build file-service
